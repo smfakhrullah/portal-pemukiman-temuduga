@@ -17,7 +17,7 @@ window.PORTAL_CONFIG = {
   DEMO_RECORDS_KEY: 'PORTAL_PEMUKIMAN_DEMO_RECORDS_2027',
 
   // Benarkan Mod Simulasi/Demo jika URL Web App belum dimasukkan (untuk ujian pantas)
-  ENABLE_DEMO_WHEN_UNCONFIGURED: true,
+  ENABLE_DEMO_WHEN_UNCONFIGURED: false,
 
   // PIN Pengawas untuk Log Keluar Kecemasan / Paksa Keluar (apabila ujian calon belum selesai)
   PIN_PENGAWAS: '2027',
