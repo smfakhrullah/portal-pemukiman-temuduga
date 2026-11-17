@@ -19,6 +19,12 @@ window.PORTAL_CONFIG = {
   // Benarkan Mod Simulasi/Demo jika URL Web App belum dimasukkan (untuk ujian pantas)
   ENABLE_DEMO_WHEN_UNCONFIGURED: true,
 
+  // PIN Pengawas untuk Log Keluar Kecemasan / Paksa Keluar (apabila ujian calon belum selesai)
+  PIN_PENGAWAS: '2027',
+
+  // Tempoh Auto-Refresh Panel Urus Setia (dalam saat)
+  ADMIN_AUTO_REFRESH_SECONDS: 30,
+
   // Metadata Subjek Mengikut Mod
   SUBJECTS: {
     AKADEMIK: [

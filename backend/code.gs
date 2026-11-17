@@ -54,7 +54,48 @@ function getAppConfig_() {
 
   return {
     spreadsheetId: spreadsheetId.trim(),
-    adminPassword: adminPassword.trim()
+    adminPassword: adminPassword.trim(),
+    portalMode: (props.getProperty('PORTAL_MODE_STATUS') || 'OPEN_ALL').trim(),
+    portalMessage: (props.getProperty('PORTAL_CUSTOM_MESSAGE') || '').trim()
+  };
+}
+
+/**
+ * Mendapatkan status semasa pembukaan sesi portal (boleh diakses secara umum oleh halaman log masuk)
+ */
+function getPublicPortalStatus_() {
+  var props = PropertiesService.getScriptProperties();
+  return {
+    status: 'BERJAYA',
+    portal_mode: (props.getProperty('PORTAL_MODE_STATUS') || 'OPEN_ALL').trim(),
+    portal_message: (props.getProperty('PORTAL_CUSTOM_MESSAGE') || '').trim()
+  };
+}
+
+/**
+ * Mengemas kini status pembukaan sesi portal (hanya boleh diubah oleh Urus Setia)
+ */
+function handleSetPortalStatus_(adminPassInput, newMode, customMessage) {
+  var config = getAppConfig_();
+  if (!adminPassInput || adminPassInput.toString().trim() !== config.adminPassword) {
+    return { status: 'GAGAL_ADMIN_AUTH', message: 'Kata laluan Urus Setia tidak sah.' };
+  }
+
+  var allowedModes = ['OPEN_ALL', 'ONLY_AKADEMIK', 'ONLY_PERSONALITI', 'CLOSED'];
+  var modeToSave = allowedModes.indexOf(newMode) !== -1 ? newMode : 'OPEN_ALL';
+  var msgToSave = (customMessage || '').toString().trim();
+
+  var props = PropertiesService.getScriptProperties();
+  props.setProperties({
+    'PORTAL_MODE_STATUS': modeToSave,
+    'PORTAL_CUSTOM_MESSAGE': msgToSave
+  });
+
+  return {
+    status: 'BERJAYA',
+    portal_mode: modeToSave,
+    portal_message: msgToSave,
+    updated_at: formatTimestamp_(new Date())
   };
 }
 
@@ -86,6 +127,9 @@ function doPost(e) {
     var action = payload.action || '';
 
     switch (action) {
+      case 'getPortalStatus':
+        return jsonResponse_(getPublicPortalStatus_());
+
       case 'login':
         return jsonResponse_(handleStudentLogin_(payload.no_kp, payload.password));
 
@@ -94,6 +138,9 @@ function doPost(e) {
 
       case 'adminDashboard':
         return jsonResponse_(handleAdminDashboard_(payload.admin_password, payload.refresh_cache));
+
+      case 'setPortalStatus':
+        return jsonResponse_(handleSetPortalStatus_(payload.admin_password, payload.portal_mode, payload.portal_message));
 
       case 'clearCache':
         return jsonResponse_(handleClearCache_(payload.admin_password));
@@ -208,6 +255,16 @@ function handleStudentLogin_(noKPInput, passInput) {
   }
 
   var config = getAppConfig_();
+
+  // Semak jika portal ditutup sepenuhnya oleh Urus Setia
+  if (config.portalMode === 'CLOSED') {
+    return {
+      status: 'PORTAL_CLOSED',
+      portal_mode: 'CLOSED',
+      message: config.portalMessage || 'Sesi ujian ditutup buat sementara waktu. Sila tunggu arahan daripada Urus Setia.'
+    };
+  }
+
   var ss = SpreadsheetApp.openById(config.spreadsheetId);
   var master = getCachedMasterData_(ss, false);
 
@@ -274,6 +331,22 @@ function handleStudentLogin_(noKPInput, passInput) {
 
   if (!modeUjian || !foundDetails) {
     return { status: 'GAGAL_PASSWORD' };
+  }
+
+  // Semak jika hanya sesi tertentu sahaja dibuka oleh Urus Setia
+  if (config.portalMode === 'ONLY_AKADEMIK' && modeUjian !== 'AKADEMIK') {
+    return {
+      status: 'SESI_DITUTUP',
+      portal_mode: config.portalMode,
+      message: config.portalMessage || 'Sesi Ujian Personaliti & Sahsiah belum dibuka oleh Urus Setia. Hanya Sesi Ujian Akademik dibuka buat masa ini.'
+    };
+  }
+  if (config.portalMode === 'ONLY_PERSONALITI' && modeUjian !== 'PERSONALITI') {
+    return {
+      status: 'SESI_DITUTUP',
+      portal_mode: config.portalMode,
+      message: config.portalMessage || 'Sesi Ujian Akademik telah ditutup atau belum bermula. Hanya Sesi Ujian Personaliti & Sahsiah dibuka buat masa ini.'
+    };
   }
 
   // Langkah 3: Rekod Log Masuk & Ambil Rekod Subjek Selesai Sedia Ada daripada 'REKOD_UJIAN'
@@ -532,6 +605,8 @@ function handleAdminDashboard_(adminPassInput, forceRefresh) {
     stats: stats,
     groups: Object.keys(groupsSet).sort(),
     candidates: candidates,
+    portal_mode: config.portalMode,
+    portal_message: config.portalMessage,
     fetched_at: formatTimestamp_(new Date())
   };
 }

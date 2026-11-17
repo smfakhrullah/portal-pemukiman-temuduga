@@ -29,7 +29,12 @@
     candidates: [],
     groups: [],
     stats: null,
-    fetchedAt: ''
+    fetchedAt: '',
+    portalMode: 'OPEN_ALL',
+    portalMessage: '',
+    autoRefreshEnabled: false,
+    autoRefreshTimer: null,
+    autoRefreshSecondsLeft: 30
   };
 
   // ==========================================================================
@@ -40,6 +45,7 @@
     setupInputFormatting();
     checkDemoBanner();
     restoreSessionFromStorage();
+    fetchPublicPortalStatus();
   });
 
   function refreshIcons() {
@@ -61,6 +67,72 @@
     } else {
       demoBanner.classList.add('hidden');
     }
+  }
+
+  async function fetchPublicPortalStatus() {
+    try {
+      const res = await callBackendApi({ action: 'getPortalStatus' });
+      if (res && res.status === 'BERJAYA') {
+        renderPublicPortalStatusBanner(res.portal_mode || 'OPEN_ALL', res.portal_message || '');
+      }
+    } catch (e) {
+      // Abaikan jika gagal semak status awal
+    }
+  }
+
+  function renderPublicPortalStatusBanner(portalMode, portalMessage) {
+    const banner = document.getElementById('portalStatusBanner');
+    const iconWrap = document.getElementById('portalStatusIconWrap');
+    const titleEl = document.getElementById('portalStatusTitle');
+    const pillEl = document.getElementById('portalStatusBadgePill');
+    const descEl = document.getElementById('portalStatusDesc');
+    const btnSubmit = document.getElementById('btnSubmit');
+
+    if (!banner) return;
+
+    if (portalMode === 'OPEN_ALL' && !portalMessage) {
+      banner.classList.add('hidden');
+      if (btnSubmit) btnSubmit.disabled = false;
+      return;
+    }
+
+    banner.classList.remove('hidden');
+
+    if (portalMode === 'CLOSED') {
+      banner.className = 'w-full rounded-2xl p-4 border border-red-200 bg-red-50/95 text-red-900 shadow-sm transition-all';
+      iconWrap.className = 'p-2 rounded-xl bg-red-100 text-red-600 flex-shrink-0';
+      iconWrap.innerHTML = '<i data-lucide="lock" class="w-4 h-4"></i>';
+      titleEl.innerText = 'Sesi Ujian Ditutup Sementara';
+      pillEl.innerText = 'DITUTUP';
+      pillEl.className = 'px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-red-600 text-white';
+      descEl.innerText = portalMessage || 'Log masuk calon ditutup buat sementara waktu. Sila tunggu arahan daripada pengawas atau urus setia.';
+    } else if (portalMode === 'ONLY_AKADEMIK') {
+      banner.className = 'w-full rounded-2xl p-4 border border-blue-200 bg-blue-50/95 text-blue-900 shadow-sm transition-all';
+      iconWrap.className = 'p-2 rounded-xl bg-blue-100 text-blue-600 flex-shrink-0';
+      iconWrap.innerHTML = '<i data-lucide="book-open" class="w-4 h-4"></i>';
+      titleEl.innerText = 'Sesi Semasa: Ujian Akademik';
+      pillEl.innerText = 'AKADEMIK SAHAJA';
+      pillEl.className = 'px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-600 text-white';
+      descEl.innerText = portalMessage || 'Hanya log masuk bagi Sesi Ujian Akademik dibuka buat masa ini.';
+    } else if (portalMode === 'ONLY_PERSONALITI') {
+      banner.className = 'w-full rounded-2xl p-4 border border-purple-200 bg-purple-50/95 text-purple-900 shadow-sm transition-all';
+      iconWrap.className = 'p-2 rounded-xl bg-purple-100 text-purple-600 flex-shrink-0';
+      iconWrap.innerHTML = '<i data-lucide="brain-circuit" class="w-4 h-4"></i>';
+      titleEl.innerText = 'Sesi Semasa: Personaliti & Sahsiah';
+      pillEl.innerText = 'PERSONALITI SAHAJA';
+      pillEl.className = 'px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-600 text-white';
+      descEl.innerText = portalMessage || 'Hanya log masuk bagi Sesi Ujian Personaliti & Sahsiah dibuka buat masa ini.';
+    } else {
+      banner.className = 'w-full rounded-2xl p-4 border border-green-200 bg-green-50/95 text-green-900 shadow-sm transition-all';
+      iconWrap.className = 'p-2 rounded-xl bg-green-100 text-green-600 flex-shrink-0';
+      iconWrap.innerHTML = '<i data-lucide="megaphone" class="w-4 h-4"></i>';
+      titleEl.innerText = 'Makluman Urus Setia';
+      pillEl.innerText = 'SEMUA SESI AKTIF';
+      pillEl.className = 'px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-green-600 text-white';
+      descEl.innerText = portalMessage;
+    }
+
+    refreshIcons();
   }
 
   function setupInputFormatting() {
@@ -199,6 +271,11 @@
 
     if (data.status === 'BERJAYA') {
       applyLoginData(data, false);
+    } else if (data.status === 'PORTAL_CLOSED' || data.status === 'SESI_DITUTUP') {
+      if (data.portal_mode) {
+        renderPublicPortalStatusBanner(data.portal_mode, data.message || '');
+      }
+      showError(data.message || 'Sesi ujian ini ditutup buat sementara waktu oleh Urus Setia.');
     } else if (data.status === 'GAGAL_PASSWORD') {
       showError('Kata Laluan Ujian salah. Sila semak semula bersama urus setia.');
     } else if (data.status === 'GAGAL_IC') {
@@ -547,10 +624,56 @@
     if (remaining > 0) {
       const remSpan = document.getElementById('logoutRemainingCount');
       if (remSpan) remSpan.innerText = remaining;
+      const forceBox = document.getElementById('forceLogoutBox');
+      const forceErr = document.getElementById('forceLogoutError');
+      const forceInput = document.getElementById('forceLogoutPinInput');
+      if (forceBox) forceBox.classList.add('hidden');
+      if (forceErr) forceErr.classList.add('hidden');
+      if (forceInput) forceInput.value = '';
       document.getElementById('logoutAlertModal').classList.remove('hidden');
+      refreshIcons();
       return;
     }
     window.doLogout();
+  };
+
+  window.closeLogoutAlertModal = function () {
+    document.getElementById('logoutAlertModal').classList.add('hidden');
+  };
+
+  window.toggleForceLogoutBox = function () {
+    const forceBox = document.getElementById('forceLogoutBox');
+    const forceInput = document.getElementById('forceLogoutPinInput');
+    if (!forceBox) return;
+    forceBox.classList.toggle('hidden');
+    if (!forceBox.classList.contains('hidden') && forceInput) {
+      setTimeout(() => forceInput.focus(), 80);
+    }
+  };
+
+  window.confirmForceLogout = function () {
+    const forceInput = document.getElementById('forceLogoutPinInput');
+    const forceErr = document.getElementById('forceLogoutError');
+    const enteredPin = (forceInput ? forceInput.value : '').trim();
+    const expectedPin = (CONFIG.PIN_PENGAWAS || '2027').toString().trim();
+
+    if (!enteredPin) {
+      if (forceErr) {
+        forceErr.innerText = 'Sila masukkan PIN Pengawas.';
+        forceErr.classList.remove('hidden');
+      }
+      return;
+    }
+
+    if (enteredPin === expectedPin || (adminState.password && enteredPin === adminState.password)) {
+      window.doLogout();
+      showCustomToast('Log keluar kecemasan (Pengawas) berjaya.', 'green');
+    } else {
+      if (forceErr) {
+        forceErr.innerText = 'PIN Pengawas tidak sah.';
+        forceErr.classList.remove('hidden');
+      }
+    }
   };
 
   window.doLogout = function () {
@@ -676,6 +799,8 @@
     adminState.groups = data.groups || [];
     adminState.stats = data.stats || {};
     adminState.fetchedAt = data.fetched_at || '-';
+    adminState.portalMode = data.portal_mode || 'OPEN_ALL';
+    adminState.portalMessage = data.portal_message || '';
 
     document.getElementById('statTotal').innerText = adminState.stats.total || 0;
     document.getElementById('statHadir').innerText = adminState.stats.hadir || 0;
@@ -683,6 +808,8 @@
     document.getElementById('statAkademik').innerText = adminState.stats.selesai_akademik || 0;
     document.getElementById('statPersonaliti').innerText = adminState.stats.selesai_personaliti || 0;
     document.getElementById('adminFetchedTime').innerText = adminState.fetchedAt;
+
+    updateAdminPortalControlUI(adminState.portalMode, adminState.portalMessage);
 
     // Isi dropdown Kumpulan
     const groupSelect = document.getElementById('adminGroupFilter');
@@ -705,6 +832,132 @@
     document.getElementById('adminSection').classList.remove('hidden');
     document.getElementById('btnOpenAdminModal').classList.add('hidden');
     refreshIcons();
+  }
+
+  function updateAdminPortalControlUI(mode, msg) {
+    const modeSelect = document.getElementById('adminPortalModeSelect');
+    const msgInput = document.getElementById('adminPortalMessageInput');
+    const badge = document.getElementById('adminPortalModeBadge');
+
+    if (modeSelect) modeSelect.value = mode || 'OPEN_ALL';
+    if (msgInput && document.activeElement !== msgInput) {
+      msgInput.value = msg || '';
+    }
+    if (badge) {
+      if (mode === 'CLOSED') {
+        badge.innerText = 'PORTAL DITUTUP';
+        badge.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-red-100 text-red-700 border border-red-200';
+      } else if (mode === 'ONLY_AKADEMIK') {
+        badge.innerText = 'SESI AKADEMIK SAHAJA';
+        badge.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-700 border border-blue-200';
+      } else if (mode === 'ONLY_PERSONALITI') {
+        badge.innerText = 'SESI PERSONALITI SAHAJA';
+        badge.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-100 text-purple-700 border border-purple-200';
+      } else {
+        badge.innerText = 'SEMUA SESI DIBUKA';
+        badge.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-green-100 text-green-700 border border-green-200';
+      }
+    }
+  }
+
+  window.savePortalControlStatus = async function () {
+    if (!adminState.password) return;
+    const modeSelect = document.getElementById('adminPortalModeSelect');
+    const msgInput = document.getElementById('adminPortalMessageInput');
+    const btn = document.getElementById('btnSavePortalStatus');
+
+    const selectedMode = modeSelect ? modeSelect.value : 'OPEN_ALL';
+    const customMsg = msgInput ? msgInput.value.trim() : '';
+
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Menyimpan...';
+      refreshIcons();
+    }
+
+    try {
+      const res = await callBackendApi({
+        action: 'setPortalStatus',
+        admin_password: adminState.password,
+        portal_mode: selectedMode,
+        portal_message: customMsg
+      });
+
+      if (res && res.status === 'BERJAYA') {
+        adminState.portalMode = res.portal_mode;
+        adminState.portalMessage = res.portal_message;
+        updateAdminPortalControlUI(res.portal_mode, res.portal_message);
+        renderPublicPortalStatusBanner(res.portal_mode, res.portal_message);
+        showCustomToast('Status kawalan sesi portal berjaya dikemas kini!', 'green');
+      } else {
+        showCustomToast((res && res.message) || 'Gagal mengemas kini status portal.', 'red');
+      }
+    } catch (err) {
+      showCustomToast('Ralat sambungan semasa menyimpan status portal.', 'red');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="save" class="w-3.5 h-3.5"></i> Simpan Status';
+        refreshIcons();
+      }
+    }
+  };
+
+  window.toggleAdminAutoRefresh = function () {
+    adminState.autoRefreshEnabled = !adminState.autoRefreshEnabled;
+    if (adminState.autoRefreshEnabled) {
+      startAdminAutoRefresh();
+      showCustomToast('Auto-Refresh (setiap 30 saat) diaktifkan.', 'green');
+    } else {
+      stopAdminAutoRefresh();
+      showCustomToast('Auto-Refresh dimatikan.', 'amber');
+    }
+  };
+
+  function startAdminAutoRefresh() {
+    stopAdminAutoRefresh(true);
+    adminState.autoRefreshEnabled = true;
+    const intervalSec = CONFIG.ADMIN_AUTO_REFRESH_SECONDS || 30;
+    adminState.autoRefreshSecondsLeft = intervalSec;
+    updateAutoRefreshButtonUI();
+
+    adminState.autoRefreshTimer = setInterval(async () => {
+      if (!adminState.autoRefreshEnabled || !adminState.password) {
+        stopAdminAutoRefresh();
+        return;
+      }
+      adminState.autoRefreshSecondsLeft--;
+      if (adminState.autoRefreshSecondsLeft <= 0) {
+        adminState.autoRefreshSecondsLeft = intervalSec;
+        await window.refreshAdminData(false);
+      }
+      updateAutoRefreshButtonUI();
+    }, 1000);
+  }
+
+  function stopAdminAutoRefresh(keepFlag) {
+    if (adminState.autoRefreshTimer) {
+      clearInterval(adminState.autoRefreshTimer);
+      adminState.autoRefreshTimer = null;
+    }
+    if (!keepFlag) {
+      adminState.autoRefreshEnabled = false;
+    }
+    updateAutoRefreshButtonUI();
+  }
+
+  function updateAutoRefreshButtonUI() {
+    const btn = document.getElementById('btnToggleAutoRefresh');
+    const lbl = document.getElementById('autoRefreshLabel');
+    if (!btn || !lbl) return;
+
+    if (adminState.autoRefreshEnabled) {
+      btn.className = 'px-3.5 py-2 bg-emerald-500/25 hover:bg-emerald-500/35 text-emerald-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-emerald-400/30';
+      lbl.innerText = `Auto-Refresh: ${adminState.autoRefreshSecondsLeft}s`;
+    } else {
+      btn.className = 'px-3.5 py-2 bg-white/10 hover:bg-white/20 text-slate-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-white/10';
+      lbl.innerText = 'Auto-Refresh: OFF';
+    }
   }
 
   window.filterAdminTable = function () {
@@ -842,10 +1095,12 @@
   };
 
   window.closeAdminDashboard = function () {
+    stopAdminAutoRefresh();
     adminState.password = '';
     document.getElementById('adminSection').classList.add('hidden');
     document.getElementById('loginSection').classList.remove('hidden');
     document.getElementById('btnOpenAdminModal').classList.remove('hidden');
+    fetchPublicPortalStatus();
   };
 
   // ==========================================================================
@@ -951,8 +1206,34 @@
         };
 
         const nowStr = new Date().toLocaleString('ms-MY');
+        const demoPortalMode = localStorage.getItem('DEMO_PORTAL_MODE') || 'OPEN_ALL';
+        const demoPortalMsg = localStorage.getItem('DEMO_PORTAL_MSG') || '';
 
-        if (payload.action === 'login') {
+        if (payload.action === 'getPortalStatus') {
+          resolve({
+            status: 'BERJAYA',
+            portal_mode: demoPortalMode,
+            portal_message: demoPortalMsg
+          });
+          return;
+        } else if (payload.action === 'setPortalStatus') {
+          localStorage.setItem('DEMO_PORTAL_MODE', payload.portal_mode || 'OPEN_ALL');
+          localStorage.setItem('DEMO_PORTAL_MSG', payload.portal_message || '');
+          resolve({
+            status: 'BERJAYA',
+            portal_mode: payload.portal_mode || 'OPEN_ALL',
+            portal_message: payload.portal_message || ''
+          });
+          return;
+        } else if (payload.action === 'login') {
+          if (demoPortalMode === 'CLOSED') {
+            resolve({
+              status: 'PORTAL_CLOSED',
+              portal_mode: 'CLOSED',
+              message: demoPortalMsg || 'Sesi ujian ditutup sementara oleh Urus Setia.'
+            });
+            return;
+          }
           if (payload.no_kp !== '081010101010') {
             resolve({ status: 'GAGAL_IC' });
             return;
@@ -1084,6 +1365,8 @@
             },
             groups: ['KUMPULAN 1 (AL-FARABI)', 'KUMPULAN 2 (IBNU SINA)'],
             candidates: candidates,
+            portal_mode: demoPortalMode,
+            portal_message: demoPortalMsg,
             fetched_at: nowStr + ' (Mod Demo)'
           });
         }
