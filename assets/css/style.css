@@ -1,0 +1,112 @@
+/* ==========================================================================
+   PORTAL UJIAN PEMUKIMAN TEMU DUGA SESI 2027 — GAYA TERSUAI (CUSTOM STYLES)
+   ========================================================================== */
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.bg-grid-pattern {
+  background-image:
+    linear-gradient(to right, #e2e8f0 1px, transparent 1px),
+    linear-gradient(to bottom, #e2e8f0 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* Animasi Kemasukan */
+.fade-in-up {
+  animation: fadeInUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+@keyframes fadeInUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.slide-down {
+  animation: slideDown 0.35s ease-out forwards;
+  transform-origin: top;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: scaleY(0.97) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1) translateY(0);
+  }
+}
+
+.scale-in {
+  animation: scaleIn 0.2s ease-out forwards;
+}
+
+@keyframes scaleIn {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Loader */
+.loader {
+  border-top-color: transparent;
+  animation: spin 0.75s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Mod Skrin Penuh (Fullscreen Exam Container) */
+.exam-fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 90 !important;
+  margin-top: 0 !important;
+  border-radius: 0 !important;
+  border: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100vh !important;
+  width: 100vw !important;
+  background: #ffffff;
+}
+
+.exam-fullscreen .exam-frame-wrapper {
+  flex: 1 1 auto !important;
+  height: calc(100vh - 88px) !important;
+}
+
+/* Bar Kemajuan (Progress Bar Shimmer) */
+.progress-bar-fill {
+  transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Cetakan Laporan Urus Setia */
+@media print {
+  header,
+  #adminActionToolbar,
+  #adminFilterBar,
+  footer {
+    display: none !important;
+  }
+  body {
+    background: #ffffff !important;
+  }
+  #adminSection {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+}
