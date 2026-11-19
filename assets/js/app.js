@@ -20,7 +20,6 @@
     links: {},
     completedSubjects: new Set(),
     activeSubject: null,
-    isFullscreen: false,
     tabSwitchCount: 0,
     lastTabSwitchAt: 0
   };
@@ -540,9 +539,6 @@
   };
 
   window.backToSubjectList = function () {
-    if (state.isFullscreen) {
-      window.toggleExamFullscreen();
-    }
     state.activeSubject = null;
     const frame = document.getElementById('examFrame');
     frame.src = '';
@@ -554,24 +550,6 @@
     } else {
       document.getElementById('cardStartPersonaliti').classList.remove('hidden');
     }
-  };
-
-  window.toggleExamFullscreen = function () {
-    const embedContainer = document.getElementById('embedContainer');
-    const fsBtnText = document.getElementById('fullscreenBtnText');
-    if (!embedContainer) return;
-
-    state.isFullscreen = !state.isFullscreen;
-    if (state.isFullscreen) {
-      embedContainer.classList.add('exam-fullscreen');
-      document.body.style.overflow = 'hidden';
-      if (fsBtnText) fsBtnText.innerText = 'Keluar Skrin Penuh';
-    } else {
-      embedContainer.classList.remove('exam-fullscreen');
-      document.body.style.overflow = '';
-      if (fsBtnText) fsBtnText.innerText = 'Skrin Penuh';
-    }
-    refreshIcons();
   };
 
   window.triggerClose = function () {
@@ -587,9 +565,6 @@
 
   window.confirmCloseExam = async function () {
     window.closeCustomModal();
-    if (state.isFullscreen) {
-      window.toggleExamFullscreen();
-    }
 
     const frame = document.getElementById('examFrame');
     frame.src = '';
@@ -833,9 +808,6 @@
   };
 
   window.doLogout = function () {
-    if (state.isFullscreen) {
-      window.toggleExamFullscreen();
-    }
     state.completedSubjects.clear();
     state.mode = '';
     state.links = {};

@@ -69,26 +69,6 @@ body {
   100% { transform: rotate(360deg); }
 }
 
-/* Mod Skrin Penuh (Fullscreen Exam Container) */
-.exam-fullscreen {
-  position: fixed !important;
-  inset: 0 !important;
-  z-index: 90 !important;
-  margin-top: 0 !important;
-  border-radius: 0 !important;
-  border: none !important;
-  display: flex !important;
-  flex-direction: column !important;
-  height: 100vh !important;
-  width: 100vw !important;
-  background: #ffffff;
-}
-
-.exam-fullscreen .exam-frame-wrapper {
-  flex: 1 1 auto !important;
-  height: calc(100vh - 88px) !important;
-}
-
 /* Bar Kemajuan (Progress Bar Shimmer) */
 .progress-bar-fill {
   transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
