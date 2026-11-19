@@ -20,7 +20,9 @@
     links: {},
     completedSubjects: new Set(),
     activeSubject: null,
-    isFullscreen: false
+    isFullscreen: false,
+    tabSwitchCount: 0,
+    lastTabSwitchAt: 0
   };
 
   // State Panel Urus Setia (Admin)
@@ -43,6 +45,7 @@
   document.addEventListener('DOMContentLoaded', function () {
     refreshIcons();
     setupInputFormatting();
+    setupAntiCheatMonitor();
     checkDemoBanner();
     restoreSessionFromStorage();
     fetchPublicPortalStatus();
@@ -165,6 +168,7 @@
       login_time: state.login_time,
       links: state.links,
       completed_subjects: Array.from(state.completedSubjects),
+      tab_switch_count: state.tabSwitchCount || 0,
       saved_at: new Date().toISOString()
     };
     try {
@@ -189,12 +193,99 @@
           kumpulan: saved.kumpulan,
           login_time: saved.login_time || 'Sesi Dipulihkan',
           data_ujian: { links: saved.links },
-          completed_subjects: saved.completed_subjects || []
+          completed_subjects: saved.completed_subjects || [],
+          tab_switch_count: saved.tab_switch_count || 0
         }, true);
       }
     } catch (err) {
       console.warn('Gagal memulihkan sesi:', err);
       localStorage.removeItem(CONFIG.STORAGE_KEY);
+    }
+  }
+
+  // ==========================================================================
+  // 1B. PEMANTAUAN INTEGRITI UJIAN (PENGESANAN TUKAR TAB / TINGKAP)
+  // ==========================================================================
+  function setupAntiCheatMonitor() {
+    if (CONFIG.ENABLE_TAB_SWITCH_MONITOR === false) return;
+
+    // 1. Kesan apabila calon menukar tab pelayar atau meminimumkan tetingkap
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden && isCandidateActivelyAnswering()) {
+        recordTabSwitchIncident();
+      }
+    });
+
+    // 2. Kesan apabila calon klik aplikasi lain di luar pelayar (elak positif palsu apabila klik ke dalam iframe Google Form)
+    window.addEventListener('blur', function () {
+      if (!isCandidateActivelyAnswering()) return;
+      setTimeout(function () {
+        const activeEl = document.activeElement;
+        const isInsideExamIframe = activeEl && (activeEl.id === 'examFrame' || activeEl.tagName === 'IFRAME');
+        if (!isInsideExamIframe && isCandidateActivelyAnswering()) {
+          recordTabSwitchIncident();
+        }
+      }, 120);
+    });
+  }
+
+  function isCandidateActivelyAnswering() {
+    return Boolean(state.no_kp && state.mode && state.activeSubject);
+  }
+
+  function recordTabSwitchIncident() {
+    const now = Date.now();
+    // Nyah-lantun (debounce) 1.5 saat supaya pertukaran tab yang sama tidak dikira dua kali
+    if (now - state.lastTabSwitchAt < 1500) return;
+    state.lastTabSwitchAt = now;
+
+    state.tabSwitchCount = (state.tabSwitchCount || 0) + 1;
+    updateTabSwitchUI();
+    saveSessionToStorage();
+
+    // Paparkan Modal Amaran Integriti kepada calon
+    const countEl = document.getElementById('tabSwitchModalCount');
+    const subjEl = document.getElementById('tabSwitchModalSubject');
+    const modalEl = document.getElementById('tabSwitchAlertModal');
+    if (countEl) countEl.innerText = state.tabSwitchCount;
+    if (subjEl) subjEl.innerText = getSubjectLabel(state.activeSubject);
+    if (modalEl) modalEl.classList.remove('hidden');
+    refreshIcons();
+
+    // Segerakkan rekod amaran tukar tab ke Google Sheet secara latar belakang
+    syncProgressToServer();
+  }
+
+  window.closeTabSwitchAlertModal = function () {
+    const modalEl = document.getElementById('tabSwitchAlertModal');
+    if (modalEl) modalEl.classList.add('hidden');
+  };
+
+  function updateTabSwitchUI() {
+    const count = state.tabSwitchCount || 0;
+    const profileBadge = document.getElementById('dispTabSwitchBadge');
+    const embedBadge = document.getElementById('embedTabSwitchBadge');
+    const embedCount = document.getElementById('embedTabSwitchCount');
+
+    if (profileBadge) {
+      if (count > 0) {
+        profileBadge.innerText = `${count} Kali Dikesan`;
+        profileBadge.className = 'text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200';
+      } else {
+        profileBadge.innerText = 'Tiada Amaran (0)';
+        profileBadge.className = 'text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200';
+      }
+    }
+
+    if (embedBadge && embedCount) {
+      embedCount.innerText = count;
+      if (count > 0) {
+        embedBadge.classList.remove('hidden');
+        embedBadge.classList.add('inline-flex');
+      } else {
+        embedBadge.classList.add('hidden');
+        embedBadge.classList.remove('inline-flex');
+      }
     }
   }
 
@@ -303,13 +394,19 @@
     // Gabungkan rekod selesai daripada pelayan (Sheet REKOD_UJIAN) & localStorage (jika calon sama)
     const serverCompleted = Array.isArray(data.completed_subjects) ? data.completed_subjects : [];
     serverCompleted.forEach(s => state.completedSubjects.add(s));
+    state.tabSwitchCount = parseInt(data.tab_switch_count, 10) || 0;
 
     try {
       const existingRaw = localStorage.getItem(CONFIG.STORAGE_KEY);
       if (existingRaw) {
         const existing = JSON.parse(existingRaw);
-        if (existing && existing.no_kp === state.no_kp && existing.mode === state.mode && Array.isArray(existing.completed_subjects)) {
-          existing.completed_subjects.forEach(s => state.completedSubjects.add(s));
+        if (existing && existing.no_kp === state.no_kp && existing.mode === state.mode) {
+          if (Array.isArray(existing.completed_subjects)) {
+            existing.completed_subjects.forEach(s => state.completedSubjects.add(s));
+          }
+          if (existing.tab_switch_count) {
+            state.tabSwitchCount = Math.max(state.tabSwitchCount, parseInt(existing.tab_switch_count, 10) || 0);
+          }
         }
       }
     } catch (e) {}
@@ -321,6 +418,7 @@
     document.getElementById('dispAngka').innerText = state.angka_giliran;
     document.getElementById('dispKumpulan').innerText = state.kumpulan;
     document.getElementById('dispMasaLogin').innerText = state.login_time;
+    updateTabSwitchUI();
 
     // Sediakan Tema & Senarai Subjek Mengikut Mod
     const bannerBg = document.getElementById('bannerBg');
@@ -445,6 +543,7 @@
     if (state.isFullscreen) {
       window.toggleExamFullscreen();
     }
+    state.activeSubject = null;
     const frame = document.getElementById('examFrame');
     frame.src = '';
     document.getElementById('embedContainer').classList.add('hidden');
@@ -498,6 +597,7 @@
     document.getElementById('iframeLoader').classList.remove('hidden');
 
     const completedKey = state.activeSubject;
+    state.activeSubject = null;
     if (completedKey) {
       state.completedSubjects.add(completedKey);
       renderSubjectDoneUI(completedKey);
@@ -591,7 +691,8 @@
         no_kp: state.no_kp,
         kumpulan: state.kumpulan,
         mode: state.mode,
-        completed_subjects: Array.from(state.completedSubjects)
+        completed_subjects: Array.from(state.completedSubjects),
+        tab_switch_count: state.tabSwitchCount || 0
       });
 
       if (res && res.status === 'BERJAYA' && syncBadge) {
@@ -651,11 +752,22 @@
     }
   };
 
-  window.confirmForceLogout = function () {
+  async function sha256Hex(text) {
+    if (window.crypto && window.crypto.subtle && window.TextEncoder) {
+      const data = new TextEncoder().encode(text);
+      const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+      return Array.from(new Uint8Array(hashBuffer))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+    }
+    return '';
+  }
+
+  window.confirmForceLogout = async function () {
     const forceInput = document.getElementById('forceLogoutPinInput');
     const forceErr = document.getElementById('forceLogoutError');
+    const btnForce = document.getElementById('btnForceLogoutSubmit');
     const enteredPin = (forceInput ? forceInput.value : '').trim();
-    const expectedPin = (CONFIG.PIN_PENGAWAS || '2027').toString().trim();
 
     if (!enteredPin) {
       if (forceErr) {
@@ -665,13 +777,57 @@
       return;
     }
 
-    if (enteredPin === expectedPin || (adminState.password && enteredPin === adminState.password)) {
-      window.doLogout();
-      showCustomToast('Log keluar kecemasan (Pengawas) berjaya.', 'green');
-    } else {
-      if (forceErr) {
-        forceErr.innerText = 'PIN Pengawas tidak sah.';
-        forceErr.classList.remove('hidden');
+    if (forceErr) forceErr.classList.add('hidden');
+    if (btnForce) {
+      btnForce.disabled = true;
+      btnForce.innerText = 'Menyemak...';
+    }
+
+    try {
+      let isAuthorized = false;
+
+      // 1. Semak melalui hash SHA-256 tempatan (tiada teks biasa PIN disimpan di frontend)
+      const expectedHash = (CONFIG.PIN_PENGAWAS_SHA256 || '').toLowerCase().trim();
+      if (expectedHash) {
+        const enteredHash = await sha256Hex(enteredPin);
+        if (enteredHash && enteredHash === expectedHash) {
+          isAuthorized = true;
+        }
+      }
+
+      // 2. Semak jika sama dengan kata laluan sesi admin semasa
+      if (!isAuthorized && adminState.password && enteredPin === adminState.password) {
+        isAuthorized = true;
+      }
+
+      // 3. Jika belum sah, sahkan dengan Script Properties (SUPERVISOR_PIN / ADMIN_PASSWORD) di pelayan
+      if (!isAuthorized) {
+        try {
+          const res = await callBackendApi({
+            action: 'verifySupervisorPin',
+            pin: enteredPin
+          });
+          if (res && res.status === 'BERJAYA') {
+            isAuthorized = true;
+          }
+        } catch (apiErr) {
+          // Abaikan ralat rangkaian jika mod luar talian
+        }
+      }
+
+      if (isAuthorized) {
+        window.doLogout();
+        showCustomToast('Log keluar kecemasan (Pengawas) berjaya.', 'green');
+      } else {
+        if (forceErr) {
+          forceErr.innerText = 'PIN Pengawas tidak sah.';
+          forceErr.classList.remove('hidden');
+        }
+      }
+    } finally {
+      if (btnForce) {
+        btnForce.disabled = false;
+        btnForce.innerText = 'Paksa Keluar';
       }
     }
   };
@@ -684,8 +840,11 @@
     state.mode = '';
     state.links = {};
     state.activeSubject = null;
+    state.tabSwitchCount = 0;
+    state.lastTabSwitchAt = 0;
 
     localStorage.removeItem(CONFIG.STORAGE_KEY);
+    window.closeTabSwitchAlertModal();
 
     document.getElementById('icInput').value = '';
     document.getElementById('passInput').value = '';
@@ -982,6 +1141,7 @@
       else if (statusVal === 'AKD_PENDING') matchStatus = c.akd_count < 5;
       else if (statusVal === 'PERS_DONE') matchStatus = c.pers_count >= 2;
       else if (statusVal === 'ALL_DONE') matchStatus = c.akd_count >= 5 && c.pers_count >= 2;
+      else if (statusVal === 'TAB_SWITCH') matchStatus = (c.tab_switch_count || 0) > 0;
 
       return matchQuery && matchGroup && matchStatus;
     });
@@ -1004,9 +1164,15 @@
     const persKeys = CONFIG.SUBJECTS.PERSONALITI;
 
     tbody.innerHTML = filtered.map(c => {
+      const tabSwitchCount = c.tab_switch_count || 0;
+      const tabSwitchBadge = tabSwitchCount > 0
+        ? `<div class="mt-1"><span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-red-50 text-red-700 border border-red-200" title="Calon dikesan keluar daripada tab/tingkap ujian sebanyak ${tabSwitchCount} kali">⚠️ ${tabSwitchCount}x Tukar Tab</span></div>`
+        : '';
+
       const hadirBadge = c.hadir
         ? `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-green-50 text-green-700 border border-green-200">Hadir</span>
-           <div class="text-[10px] text-slate-400 mt-0.5">${escapeHtml(c.last_login)}</div>`
+           <div class="text-[10px] text-slate-400 mt-0.5">${escapeHtml(c.last_login)}</div>
+           ${tabSwitchBadge}`
         : `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-500">Belum Log Masuk</span>`;
 
       const akdPills = akdKeys.map(sub => {
@@ -1066,7 +1232,8 @@
       'Progres Akademik',
       'Subjek Akademik Selesai',
       'Progres Personaliti',
-      'Subjek Personaliti Selesai'
+      'Subjek Personaliti Selesai',
+      'Kiraan Tukar Tab'
     ];
 
     const rows = adminState.candidates.map(c => [
@@ -1079,7 +1246,8 @@
       `${c.akd_count}/5`,
       `"${(c.akd_subjek || []).join(', ')}"`,
       `${c.pers_count}/2`,
-      `"${(c.pers_subjek || []).join(', ')}"`
+      `"${(c.pers_subjek || []).join(', ')}"`,
+      c.tab_switch_count || 0
     ]);
 
     const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\r\n');
@@ -1200,9 +1368,9 @@
       setTimeout(() => {
         const demoRecordsRaw = localStorage.getItem(CONFIG.DEMO_RECORDS_KEY);
         const demoRecords = demoRecordsRaw ? JSON.parse(demoRecordsRaw) : {
-          'A001': { akd: [], pers: [], last_login: '-' },
-          'A002': { akd: ['bm', 'bi', 'mat', 'sains', 'sej'], pers: ['personaliti'], last_login: '17/11/2026 08:30:00 AM' },
-          'A003': { akd: ['bm', 'bi'], pers: [], last_login: '17/11/2026 08:45:12 AM' }
+          'A001': { akd: [], pers: [], last_login: '-', tab_switch_count: 0 },
+          'A002': { akd: ['bm', 'bi', 'mat', 'sains', 'sej'], pers: ['personaliti'], last_login: '17/11/2026 08:30:00 AM', tab_switch_count: 0 },
+          'A003': { akd: ['bm', 'bi'], pers: [], last_login: '17/11/2026 08:45:12 AM', tab_switch_count: 2 }
         };
 
         const nowStr = new Date().toLocaleString('ms-MY');
@@ -1215,6 +1383,13 @@
             portal_mode: demoPortalMode,
             portal_message: demoPortalMsg
           });
+          return;
+        } else if (payload.action === 'verifySupervisorPin') {
+          if (payload.pin === 'admin2027') {
+            resolve({ status: 'BERJAYA' });
+          } else {
+            resolve({ status: 'GAGAL_PIN' });
+          }
           return;
         } else if (payload.action === 'setPortalStatus') {
           localStorage.setItem('DEMO_PORTAL_MODE', payload.portal_mode || 'OPEN_ALL');
@@ -1251,6 +1426,7 @@
               kumpulan: 'KUMPULAN 1 (AL-FARABI)',
               login_time: nowStr,
               completed_subjects: demoRecords['A001'].akd || [],
+              tab_switch_count: demoRecords['A001'].tab_switch_count || 0,
               data_ujian: {
                 links: {
                   bm: 'https://example.com',
@@ -1273,6 +1449,7 @@
               kumpulan: 'KUMPULAN 1 (AL-FARABI)',
               login_time: nowStr,
               completed_subjects: demoRecords['A001'].pers || [],
+              tab_switch_count: demoRecords['A001'].tab_switch_count || 0,
               data_ujian: {
                 links: {
                   personaliti: 'https://example.com',
@@ -1285,20 +1462,27 @@
           }
         } else if (payload.action === 'updateProgress') {
           const ag = payload.angka_giliran || 'A001';
-          if (!demoRecords[ag]) demoRecords[ag] = { akd: [], pers: [], last_login: nowStr };
+          if (!demoRecords[ag]) demoRecords[ag] = { akd: [], pers: [], last_login: nowStr, tab_switch_count: 0 };
           if (payload.mode === 'AKADEMIK') {
             demoRecords[ag].akd = payload.completed_subjects || [];
           } else {
             demoRecords[ag].pers = payload.completed_subjects || [];
           }
+          if (typeof payload.tab_switch_count === 'number') {
+            demoRecords[ag].tab_switch_count = Math.max(demoRecords[ag].tab_switch_count || 0, payload.tab_switch_count);
+          }
           localStorage.setItem(CONFIG.DEMO_RECORDS_KEY, JSON.stringify(demoRecords));
-          resolve({ status: 'BERJAYA', completed_subjects: payload.completed_subjects || [] });
+          resolve({
+            status: 'BERJAYA',
+            completed_subjects: payload.completed_subjects || [],
+            tab_switch_count: demoRecords[ag].tab_switch_count || 0
+          });
         } else if (payload.action === 'adminDashboard') {
           if (payload.admin_password !== 'admin2027') {
             resolve({ status: 'GAGAL_ADMIN_AUTH', message: 'Kata laluan Demo Admin ialah: admin2027' });
             return;
           }
-          const recA1 = demoRecords['A001'] || { akd: [], pers: [], last_login: '-' };
+          const recA1 = demoRecords['A001'] || { akd: [], pers: [], last_login: '-', tab_switch_count: 0 };
           const recA2 = demoRecords['A002'];
           const recA3 = demoRecords['A003'];
 
@@ -1313,7 +1497,8 @@
               akd_count: recA1.akd.length,
               akd_subjek: recA1.akd,
               pers_count: recA1.pers.length,
-              pers_subjek: recA1.pers
+              pers_subjek: recA1.pers,
+              tab_switch_count: recA1.tab_switch_count || 0
             },
             {
               angka_giliran: 'A002',
@@ -1325,7 +1510,8 @@
               akd_count: recA2.akd.length,
               akd_subjek: recA2.akd,
               pers_count: recA2.pers.length,
-              pers_subjek: recA2.pers
+              pers_subjek: recA2.pers,
+              tab_switch_count: recA2.tab_switch_count || 0
             },
             {
               angka_giliran: 'A003',
@@ -1337,7 +1523,8 @@
               akd_count: recA3.akd.length,
               akd_subjek: recA3.akd,
               pers_count: recA3.pers.length,
-              pers_subjek: recA3.pers
+              pers_subjek: recA3.pers,
+              tab_switch_count: recA3.tab_switch_count || 2
             },
             {
               angka_giliran: 'A004',
@@ -1349,7 +1536,8 @@
               akd_count: 0,
               akd_subjek: [],
               pers_count: 0,
-              pers_subjek: []
+              pers_subjek: [],
+              tab_switch_count: 0
             }
           ];
 

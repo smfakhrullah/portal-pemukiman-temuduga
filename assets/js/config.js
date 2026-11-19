@@ -19,8 +19,12 @@ window.PORTAL_CONFIG = {
   // Benarkan Mod Simulasi/Demo jika URL Web App belum dimasukkan (untuk ujian pantas)
   ENABLE_DEMO_WHEN_UNCONFIGURED: false,
 
-  // PIN Pengawas untuk Log Keluar Kecemasan / Paksa Keluar (apabila ujian calon belum selesai)
-  PIN_PENGAWAS: '2027',
+  // Hash SHA-256 bagi PIN Pengawas untuk Log Keluar Kecemasan (tiada teks biasa didedahkan di frontend).
+  // Pengesahan utama dibuat melalui Script Properties (SUPERVISOR_PIN / ADMIN_PASSWORD) di pelayan Apps Script.
+  PIN_PENGAWAS_SHA256: '5313e5bf17148de844ff74be3663d47c6e361ca469b30a36337701233c89a15e',
+
+  // Pengesanan Tukar Tab / Tingkap semasa calon menjawab ujian (Anti-Cheat Ringan)
+  ENABLE_TAB_SWITCH_MONITOR: true,
 
   // Tempoh Auto-Refresh Panel Urus Setia (dalam saat)
   ADMIN_AUTO_REFRESH_SECONDS: 30,

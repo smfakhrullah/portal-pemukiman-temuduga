@@ -35,7 +35,8 @@ function setupConfig() {
   var props = PropertiesService.getScriptProperties();
   props.setProperties({
     'SPREADSHEET_ID': 'MASUKKAN_SPREADSHEET_ID_DI_SINI',
-    'ADMIN_PASSWORD': ' TUKAR_KATA_LALUAN_ADMIN_DI_SINI'
+    'ADMIN_PASSWORD': 'TUKAR_KATA_LALUAN_ADMIN_DI_SINI',
+    'SUPERVISOR_PIN': '2027'
   });
   Logger.log('Konfigurasi berjaya disimpan ke dalam Script Properties!');
 }
@@ -47,6 +48,7 @@ function getAppConfig_() {
   var props = PropertiesService.getScriptProperties();
   var spreadsheetId = props.getProperty('SPREADSHEET_ID');
   var adminPassword = props.getProperty('ADMIN_PASSWORD') || 'admin2027';
+  var supervisorPin = props.getProperty('SUPERVISOR_PIN') || '2027';
 
   if (!spreadsheetId || spreadsheetId === 'MASUKKAN_SPREADSHEET_ID_DI_SINI') {
     throw new Error('SPREADSHEET_ID_BELUM_DITETAPKAN');
@@ -55,9 +57,25 @@ function getAppConfig_() {
   return {
     spreadsheetId: spreadsheetId.trim(),
     adminPassword: adminPassword.trim(),
+    supervisorPin: supervisorPin.trim(),
     portalMode: (props.getProperty('PORTAL_MODE_STATUS') || 'OPEN_ALL').trim(),
     portalMessage: (props.getProperty('PORTAL_CUSTOM_MESSAGE') || '').trim()
   };
+}
+
+/**
+ * Mengesahkan PIN Pengawas atau Kata Laluan Urus Setia bagi Log Keluar Kecemasan
+ */
+function handleVerifySupervisorPin_(pinInput) {
+  var cleanPin = (pinInput || '').toString().trim();
+  if (!cleanPin) {
+    return { status: 'GAGAL_PIN', message: 'Sila masukkan PIN Pengawas.' };
+  }
+  var config = getAppConfig_();
+  if (cleanPin === config.supervisorPin || cleanPin === config.adminPassword) {
+    return { status: 'BERJAYA' };
+  }
+  return { status: 'GAGAL_PIN', message: 'PIN Pengawas tidak sah.' };
 }
 
 /**
@@ -141,6 +159,9 @@ function doPost(e) {
 
       case 'setPortalStatus':
         return jsonResponse_(handleSetPortalStatus_(payload.admin_password, payload.portal_mode, payload.portal_message));
+
+      case 'verifySupervisorPin':
+        return jsonResponse_(handleVerifySupervisorPin_(payload.pin));
 
       case 'clearCache':
         return jsonResponse_(handleClearCache_(payload.admin_password));
@@ -234,7 +255,8 @@ function getOrCreateRekodSheet_(ss) {
       'SUBJEK AKADEMIK SELESAI',
       'STATUS PERSONALITI',
       'SUBJEK PERSONALITI SELESAI',
-      'KEMAS KINI TERAKHIR'
+      'KEMAS KINI TERAKHIR',
+      'KIRAAN TUKAR TAB'
     ];
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     sheet.getRange(1, 1, 1, headers.length)
@@ -242,6 +264,15 @@ function getOrCreateRekodSheet_(ss) {
       .setBackground('#1e293b')
       .setFontColor('#ffffff');
     sheet.setFrozenRows(1);
+  } else {
+    // Pastikan lajur ke-11 (KIRAAN TUKAR TAB) wujud untuk helaian sedia ada
+    var col11Header = sheet.getRange(1, 11).getDisplayValue();
+    if (!col11Header) {
+      sheet.getRange(1, 11).setValue('KIRAAN TUKAR TAB')
+        .setFontWeight('bold')
+        .setBackground('#1e293b')
+        .setFontColor('#ffffff');
+    }
   }
   return sheet;
 }
@@ -350,7 +381,7 @@ function handleStudentLogin_(noKPInput, passInput) {
   }
 
   // Langkah 3: Rekod Log Masuk & Ambil Rekod Subjek Selesai Sedia Ada daripada 'REKOD_UJIAN'
-  var completedSubjects = syncStudentLoginRecord_(ss, studentData, modeUjian);
+  var syncRecord = syncStudentLoginRecord_(ss, studentData, modeUjian);
 
   return {
     status: 'BERJAYA',
@@ -360,17 +391,19 @@ function handleStudentLogin_(noKPInput, passInput) {
     angka_giliran: studentData.angka_giliran,
     kumpulan: studentData.kumpulan,
     data_ujian: foundDetails,
-    completed_subjects: completedSubjects,
+    completed_subjects: syncRecord.completedList,
+    tab_switch_count: syncRecord.tabSwitchCount,
     login_time: formatTimestamp_(new Date())
   };
 }
 
 /**
- * Menyegerakkan log masuk calon dengan sheet REKOD_UJIAN dan memulangkan subjek yang telah selesai
+ * Menyegerakkan log masuk calon dengan sheet REKOD_UJIAN dan memulangkan subjek yang telah selesai serta kiraan tukar tab
  */
 function syncStudentLoginRecord_(ss, studentData, modeUjian) {
   var lock = LockService.getScriptLock();
   var completedList = [];
+  var tabSwitchCount = 0;
 
   try {
     lock.waitLock(10000);
@@ -386,6 +419,7 @@ function syncStudentLoginRecord_(ss, studentData, modeUjian) {
         if (rawSubjects.trim() !== '') {
           completedList = rawSubjects.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
         }
+        tabSwitchCount = parseInt(dataRekod[i][10], 10) || 0;
         break;
       }
     }
@@ -401,7 +435,8 @@ function syncStudentLoginRecord_(ss, studentData, modeUjian) {
         '',
         '0/2',
         '',
-        nowStr
+        nowStr,
+        0
       ]);
     } else {
       sheetRekod.getRange(foundRowIndex, 5).setValue(nowStr); // Log Masuk Terakhir
@@ -413,16 +448,20 @@ function syncStudentLoginRecord_(ss, studentData, modeUjian) {
     try { lock.releaseLock(); } catch (e) {}
   }
 
-  return completedList;
+  return {
+    completedList: completedList,
+    tabSwitchCount: tabSwitchCount
+  };
 }
 
 /**
- * 2. FUNGSI KEMAS KINI STATUS SELESAI SUBJEK KE SHEET 'REKOD_UJIAN'
+ * 2. FUNGSI KEMAS KINI STATUS SELESAI SUBJEK & KIRAAN TUKAR TAB KE SHEET 'REKOD_UJIAN'
  */
 function handleUpdateProgress_(payload) {
   var angkaGiliran = (payload.angka_giliran || '').toString().trim();
   var mode = (payload.mode || '').toString().trim();
   var incomingSubjects = Array.isArray(payload.completed_subjects) ? payload.completed_subjects : [];
+  var incomingTabSwitches = parseInt(payload.tab_switch_count, 10) || 0;
 
   if (!angkaGiliran || !mode) {
     return { status: 'ERROR_INVALID_DATA' };
@@ -449,6 +488,7 @@ function handleUpdateProgress_(payload) {
     var dataRekod = sheetRekod.getDataRange().getDisplayValues();
     var nowStr = formatTimestamp_(new Date());
     var foundRowIndex = -1;
+    var existingTabSwitches = 0;
 
     for (var i = 1; i < dataRekod.length; i++) {
       if ((dataRekod[i][0] || '').toString().trim() === angkaGiliran) {
@@ -461,10 +501,12 @@ function handleUpdateProgress_(payload) {
             cleanCompleted.push(existingArr[m]);
           }
         }
+        existingTabSwitches = parseInt(dataRekod[i][10], 10) || 0;
         break;
       }
     }
 
+    var finalTabSwitches = Math.max(existingTabSwitches, incomingTabSwitches);
     var totalRequired = validSubjects.length;
     var count = cleanCompleted.length;
     var statusLabel = count >= totalRequired
@@ -488,7 +530,8 @@ function handleUpdateProgress_(payload) {
         akdCsv,
         persStatus,
         persCsv,
-        nowStr
+        nowStr,
+        finalTabSwitches
       ]);
     } else {
       if (mode === 'AKADEMIK') {
@@ -496,12 +539,13 @@ function handleUpdateProgress_(payload) {
       } else {
         sheetRekod.getRange(foundRowIndex, 8, 1, 2).setValues([[statusLabel, subjectsCsv]]);
       }
-      sheetRekod.getRange(foundRowIndex, 10).setValue(nowStr);
+      sheetRekod.getRange(foundRowIndex, 10, 1, 2).setValues([[nowStr, finalTabSwitches]]);
     }
 
     return {
       status: 'BERJAYA',
       completed_subjects: cleanCompleted,
+      tab_switch_count: finalTabSwitches,
       progress_label: statusLabel,
       updated_at: nowStr
     };
@@ -543,7 +587,8 @@ function handleAdminDashboard_(adminPassInput, forceRefresh) {
         subjek_akademik: rowR[6] ? rowR[6].split(',').filter(Boolean) : [],
         status_personaliti: rowR[7] || '0/2',
         subjek_personaliti: rowR[8] ? rowR[8].split(',').filter(Boolean) : [],
-        updated_at: rowR[9] || '-'
+        updated_at: rowR[9] || '-',
+        tab_switch_count: parseInt(rowR[10], 10) || 0
       };
     }
   }
@@ -556,7 +601,8 @@ function handleAdminDashboard_(adminPassInput, forceRefresh) {
     belum_hadir: 0,
     selesai_akademik: 0,
     selesai_personaliti: 0,
-    selesai_semua: 0
+    selesai_semua: 0,
+    amaran_tukar_tab: 0
   };
 
   for (var i = 1; i < master.dbRows.length; i++) {
@@ -574,6 +620,7 @@ function handleAdminDashboard_(adminPassInput, forceRefresh) {
     var rec = rekodMap[ag] || null;
     var akdCount = rec ? rec.subjek_akademik.length : 0;
     var persCount = rec ? rec.subjek_personaliti.length : 0;
+    var tabSwitchCount = rec ? (rec.tab_switch_count || 0) : 0;
     var isHadir = Boolean(rec);
     var isAkdDone = akdCount >= 5;
     var isPersDone = persCount >= 2;
@@ -584,6 +631,7 @@ function handleAdminDashboard_(adminPassInput, forceRefresh) {
     if (isAkdDone) stats.selesai_akademik++;
     if (isPersDone) stats.selesai_personaliti++;
     if (isAkdDone && isPersDone) stats.selesai_semua++;
+    if (tabSwitchCount > 0) stats.amaran_tukar_tab++;
 
     candidates.push({
       angka_giliran: ag,
@@ -596,6 +644,7 @@ function handleAdminDashboard_(adminPassInput, forceRefresh) {
       akd_subjek: rec ? rec.subjek_akademik : [],
       pers_count: persCount,
       pers_subjek: rec ? rec.subjek_personaliti : [],
+      tab_switch_count: tabSwitchCount,
       updated_at: rec ? rec.updated_at : '-'
     });
   }
